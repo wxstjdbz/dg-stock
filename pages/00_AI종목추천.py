@@ -1,166 +1,140 @@
+# pages/00_AI종목추천.py
+
 import streamlit as st
 import yfinance as yf
 import pandas as pd
-from openai import OpenAI
-
-# ------------------------
-# 설정
-# ------------------------
+import numpy as np
 
 st.set_page_config(
-    page_title="AI 종목 추천",
-    page_icon="🤖",
-    layout="wide"
+page_title="AI 종목 추천",
+page_icon="🤖",
+layout="wide"
 )
 
-st.title("🤖 AI 주식 추천 시스템")
+st.title("🤖 AI 종목 추천 시스템")
 
-api_key = st.sidebar.text_input(
-    "OpenAI API Key",
-    type="password"
+st.markdown(
+"""
+최근 수익률, 변동성, 기업 규모를 기반으로
+AI 점수를 계산합니다.
+"""
 )
 
-if not api_key:
-    st.info("OpenAI API Key를 입력하세요.")
-    st.stop()
-
-client = OpenAI(api_key=api_key)
-
-# ------------------------
-# 종목 리스트
-# ------------------------
-
-tickers = {
-    "Apple": "AAPL",
-    "Microsoft": "MSFT",
-    "Nvidia": "NVDA",
-    "Amazon": "AMZN",
-    "Google": "GOOGL",
-    "Meta": "META",
-    "Tesla": "TSLA",
-    "AMD": "AMD",
-    "Broadcom": "AVGO",
-    "Palantir": "PLTR"
+TICKERS = {
+"Apple": "AAPL",
+"Microsoft": "MSFT",
+"Nvidia": "NVDA",
+"Amazon": "AMZN",
+"Google": "GOOGL",
+"Meta": "META",
+"Tesla": "TSLA",
+"AMD": "AMD",
+"Broadcom": "AVGO",
+"Palantir": "PLTR"
 }
 
-selected_stock = st.selectbox(
-    "종목 선택",
-    list(tickers.keys())
-)
-
-# ------------------------
-# 데이터 수집
-# ------------------------
-
 @st.cache_data(ttl=3600)
-def get_stock_info(ticker):
+def analyze_stock(ticker):
 
-    stock = yf.Ticker(ticker)
+```
+stock = yf.Ticker(ticker)
 
-    info = stock.info
+hist = stock.history(period="1y")
 
-    hist = stock.history(period="1y")
+if len(hist) < 100:
+    return None
 
-    current_price = hist["Close"].iloc[-1]
+info = stock.info
 
-    return_1m = (
-        current_price /
-        hist["Close"].iloc[-22] - 1
-    ) * 100
+close = hist["Close"]
 
-    return_3m = (
-        current_price /
-        hist["Close"].iloc[-66] - 1
-    ) * 100
+ret_1m = (close.iloc[-1] / close.iloc[-22] - 1) * 100
+ret_3m = (close.iloc[-1] / close.iloc[-66] - 1) * 100
+ret_1y = (close.iloc[-1] / close.iloc[0] - 1) * 100
 
-    return_1y = (
-        current_price /
-        hist["Close"].iloc[0] - 1
-    ) * 100
+volatility = close.pct_change().std() * np.sqrt(252) * 100
 
-    return {
-        "company": info.get("longName"),
-        "sector": info.get("sector"),
-        "market_cap": info.get("marketCap"),
-        "pe": info.get("trailingPE"),
-        "current_price": round(current_price, 2),
-        "return_1m": round(return_1m, 2),
-        "return_3m": round(return_3m, 2),
-        "return_1y": round(return_1y, 2),
-    }
+market_cap = info.get("marketCap", 0)
 
-ticker = tickers[selected_stock]
-
-data = get_stock_info(ticker)
-
-# ------------------------
-# 정보 표시
-# ------------------------
-
-col1, col2, col3 = st.columns(3)
-
-col1.metric(
-    "현재가",
-    f"${data['current_price']}"
+score = (
+    ret_1m * 0.2 +
+    ret_3m * 0.3 +
+    ret_1y * 0.4 -
+    volatility * 0.1
 )
 
-col2.metric(
-    "1개월 수익률",
-    f"{data['return_1m']}%"
+return {
+    "종목": ticker,
+    "회사명": info.get("shortName", ticker),
+    "1개월수익률": round(ret_1m, 2),
+    "3개월수익률": round(ret_3m, 2),
+    "1년수익률": round(ret_1y, 2),
+    "변동성": round(volatility, 2),
+    "시가총액": market_cap,
+    "AI점수": round(score, 2)
+}
+```
+
+if st.button("AI 추천 종목 분석"):
+
+```
+results = []
+
+progress = st.progress(0)
+
+for idx, ticker in enumerate(TICKERS.values()):
+
+    try:
+        data = analyze_stock(ticker)
+
+        if data:
+            results.append(data)
+
+    except Exception:
+        pass
+
+    progress.progress((idx + 1) / len(TICKERS))
+
+if len(results) == 0:
+    st.error("데이터를 불러오지 못했습니다.")
+    st.stop()
+
+df = pd.DataFrame(results)
+
+df = df.sort_values(
+    "AI점수",
+    ascending=False
 )
 
-col3.metric(
-    "1년 수익률",
-    f"{data['return_1y']}%"
+st.subheader("🏆 AI 추천 순위")
+
+st.dataframe(
+    df,
+    use_container_width=True
 )
 
-st.write("### 기업 정보")
+top = df.iloc[0]
 
-st.json(data)
+st.success(
+    f"""
+    오늘의 추천 종목:
+    {top['회사명']} ({top['종목']})
 
-# ------------------------
-# AI 분석
-# ------------------------
+    AI 점수: {top['AI점수']}
+    """
+)
 
-if st.button("AI 종목 분석"):
+st.subheader("📈 투자 의견")
 
-    with st.spinner("AI 분석 중..."):
+if top["AI점수"] >= 50:
+    st.info("강력 추천")
 
-        prompt = f"""
-        다음 종목을 분석해줘.
+elif top["AI점수"] >= 20:
+    st.info("추천")
 
-        기업명: {data['company']}
-        섹터: {data['sector']}
-        PER: {data['pe']}
-        시가총액: {data['market_cap']}
-        1개월 수익률: {data['return_1m']}%
-        3개월 수익률: {data['return_3m']}%
-        1년 수익률: {data['return_1y']}%
+elif top["AI점수"] >= 0:
+    st.warning("중립")
 
-        아래 형식으로 답변:
-
-        1. 기업 요약
-        2. 강점
-        3. 리스크
-        4. 향후 성장성
-        5. 투자 의견
-           - 추천
-           - 중립
-           - 주의
-
-        한국어로 작성.
-        """
-
-        response = client.chat.completions.create(
-            model="gpt-5",
-            messages=[
-                {
-                    "role": "user",
-                    "content": prompt
-                }
-            ]
-        )
-
-        result = response.choices[0].message.content
-
-        st.markdown(result)
+else:
+    st.error("주의")
+```
